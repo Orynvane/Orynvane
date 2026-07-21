@@ -1,4 +1,5 @@
 # Orynvane
+[![Release](https://github.com/Orynvane/Orynvane/actions/workflows/release.yml/badge.svg)](https://github.com/Orynvane/Orynvane/actions/workflows/release.yml)
 
 Orynvane is a Mac-native web browser with an independent engine built from
 first principles. Enter a web address, load HTTP or HTTPS pages, read HTML
