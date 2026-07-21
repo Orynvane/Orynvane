@@ -47,6 +47,9 @@ jobs:
       - name: Install release tooling
         run: npm ci --ignore-scripts
 
+      - name: Test release tooling
+        run: npm run test:release
+
       - name: Publish semantic release
         run: npm run release
         env:

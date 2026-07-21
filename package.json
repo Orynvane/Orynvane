@@ -5,7 +5,8 @@
     "node": ">=24.10.0 <25"
   },
   "scripts": {
-    "release": "semantic-release"
+    "release": "semantic-release",
+    "test:release": "node --test scripts/github-release-notes.test.cjs"
   },
   "devDependencies": {
     "conventional-changelog-conventionalcommits": "10.2.1",
