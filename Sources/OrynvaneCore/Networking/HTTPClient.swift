@@ -66,8 +66,9 @@ extension HTTPClientError: LocalizedError {
 
 /// A deliberately small HTTP/1.1 client built directly on TCP and TLS.
 ///
-/// `HTTPClient` performs GET requests only. It does not provide cookies, a
-/// cache, authentication, compression, or any other browser service.
+/// `HTTPClient` performs GET requests and the small JSON POSTs needed by native
+/// services. It does not provide cookies, a cache, authentication, compression,
+/// or any other browser service.
 public struct HTTPClient: Sendable {
     public static let defaultMaximumResponseBytes = 8 * 1024 * 1024
 
@@ -86,10 +87,33 @@ public struct HTTPClient: Sendable {
     }
 
     public func fetch(_ url: URL) async throws -> HTTPResponse {
+        try await request(url, jsonBody: nil, additionalHeaders: [:])
+    }
+
+    func postJSON(
+        _ body: Data,
+        to url: URL,
+        additionalHeaders: [String: String] = [:]
+    ) async throws -> HTTPResponse {
+        try await request(url, jsonBody: body, additionalHeaders: additionalHeaders)
+    }
+
+    private func request(
+        _ url: URL,
+        jsonBody: Data?,
+        additionalHeaders: [String: String]
+    ) async throws -> HTTPResponse {
         var currentURL = url.absoluteURL
+        var currentBody = jsonBody
+        var currentHeaders = additionalHeaders
 
         for redirectCount in 0...maxRedirects {
-            let request = try Request(currentURL, userAgent: userAgent)
+            let request = try Request(
+                currentURL,
+                userAgent: userAgent,
+                jsonBody: currentBody,
+                additionalHeaders: currentHeaders
+            )
             let wireData = try await NetworkExchange(
                 host: request.host,
                 port: request.port,
@@ -119,6 +143,29 @@ public struct HTTPClient: Sendable {
             guard let redirectURL = URL(string: location, relativeTo: currentURL)?.absoluteURL else {
                 throw HTTPClientError.invalidResponse("The redirect Location is not a valid URL.")
             }
+
+            if currentURL.scheme?.lowercased() == "https" &&
+                redirectURL.scheme?.lowercased() == "http" {
+                throw HTTPClientError.invalidResponse("An HTTPS request cannot redirect to HTTP.")
+            }
+
+            let sameOrigin = Self.hasSameOrigin(currentURL, redirectURL)
+            if currentBody != nil,
+               (parsed.statusCode == 307 || parsed.statusCode == 308),
+               !sameOrigin {
+                throw HTTPClientError.invalidResponse(
+                    "A JSON POST cannot be redirected to a different origin."
+                )
+            }
+
+            if !sameOrigin {
+                currentHeaders = [:]
+            }
+
+            if parsed.statusCode == 303 ||
+                ((parsed.statusCode == 301 || parsed.statusCode == 302) && currentBody != nil) {
+                currentBody = nil
+            }
             currentURL = redirectURL
         }
 
@@ -135,7 +182,12 @@ private extension HTTPClient {
         let usesTLS: Bool
         let bytes: Data
 
-        init(_ url: URL, userAgent: String) throws {
+        init(
+            _ url: URL,
+            userAgent: String,
+            jsonBody: Data?,
+            additionalHeaders: [String: String]
+        ) throws {
             guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
                 throw HTTPClientError.unsupportedScheme(url.scheme)
             }
@@ -157,21 +209,51 @@ private extension HTTPClient {
             let safeUserAgent = userAgent
                 .replacingOccurrences(of: "\r", with: " ")
                 .replacingOccurrences(of: "\n", with: " ")
-            let requestText = [
-                "GET \(target) HTTP/1.1",
+            var requestLines = [
+                "\(jsonBody == nil ? "GET" : "POST") \(target) HTTP/1.1",
                 "Host: \(hostForHeader)\(explicitPort)",
                 "User-Agent: \(safeUserAgent)",
-                "Accept: text/html, application/xhtml+xml, text/plain, */*",
+                jsonBody == nil
+                    ? "Accept: text/html, application/xhtml+xml, text/plain, */*"
+                    : "Accept: application/json",
                 "Accept-Encoding: identity",
                 "Connection: close",
-                "",
-                "",
-            ].joined(separator: "\r\n")
+            ]
+
+            for (name, value) in additionalHeaders.sorted(by: { $0.key < $1.key }) {
+                guard Self.isSafeHeaderName(name), Self.isSafeHeaderValue(value) else {
+                    throw HTTPClientError.invalidResponse("An HTTP request header is invalid.")
+                }
+                requestLines.append("\(name): \(value)")
+            }
+
+            if let jsonBody {
+                requestLines.append("Content-Type: application/json")
+                requestLines.append("Content-Length: \(jsonBody.count)")
+            }
+
+            requestLines.append("")
+            requestLines.append("")
+
+            var requestData = Data(requestLines.joined(separator: "\r\n").utf8)
+            if let jsonBody {
+                requestData.append(jsonBody)
+            }
 
             self.host = host
             self.port = port
             self.usesTLS = scheme == "https"
-            self.bytes = Data(requestText.utf8)
+            self.bytes = requestData
+        }
+
+        private static func isSafeHeaderName(_ value: String) -> Bool {
+            !value.isEmpty && value.unicodeScalars.allSatisfy { scalar in
+                scalar.value > 32 && scalar.value < 127 && !"()<>@,;:\\\"/[]?={} ".unicodeScalars.contains(scalar)
+            }
+        }
+
+        private static func isSafeHeaderValue(_ value: String) -> Bool {
+            !value.contains("\r") && !value.contains("\n")
         }
 
         private static func requestTarget(for url: URL) -> String {
@@ -189,6 +271,31 @@ private extension HTTPClient {
 }
 
 extension HTTPClient {
+    static func hasSameOrigin(_ first: URL, _ second: URL) -> Bool {
+        guard let firstScheme = first.scheme?.lowercased(),
+              let secondScheme = second.scheme?.lowercased(),
+              let firstHost = first.host?.lowercased(),
+              let secondHost = second.host?.lowercased() else {
+            return false
+        }
+
+        func effectivePort(for url: URL, scheme: String) -> Int? {
+            if let port = url.port {
+                return port
+            }
+            switch scheme {
+            case "http": return 80
+            case "https": return 443
+            default: return nil
+            }
+        }
+
+        return firstScheme == secondScheme &&
+            firstHost == secondHost &&
+            effectivePort(for: first, scheme: firstScheme) ==
+                effectivePort(for: second, scheme: secondScheme)
+    }
+
     static func makeParameters(usesTLS: Bool) -> NWParameters {
         let parameters: NWParameters
         if usesTLS {
