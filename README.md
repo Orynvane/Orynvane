@@ -51,3 +51,19 @@ open dist/Orynvane.app
 ```sh
 swift test
 ```
+
+## Releases
+
+GitHub Releases are published automatically from `main` after the test suite
+passes. Release versions are calculated from Conventional Commit messages since
+the latest `vX.Y.Z` tag:
+
+- `fix:` and `perf:` create a patch release.
+- `feat:` creates a minor release.
+- A `BREAKING CHANGE:` footer or `!` after the commit type creates a major
+  release.
+- Other commit types, such as `docs:`, `test:`, `chore:`, and `ci:`, do not
+  create a release by themselves.
+
+The release workflow creates the version tag, release notes, and GitHub Release;
+version tags should not be created manually.
