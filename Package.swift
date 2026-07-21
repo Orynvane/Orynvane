@@ -19,7 +19,11 @@ let package = Package(
         .executableTarget(
             name: "Orynvane",
             dependencies: ["OrynvaneCore"],
-            path: "Sources/OrynvaneApp"
+            path: "Sources/OrynvaneApp",
+            linkerSettings: [
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("AVKit")
+            ]
         ),
         .testTarget(
             name: "OrynvaneCoreTests",

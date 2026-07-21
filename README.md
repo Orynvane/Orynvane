@@ -10,6 +10,7 @@ documents, and follow links in a native Mac interface.
 - address-bar navigation
 - clickable links and relative URL resolution
 - native text, heading, list, and inline-format rendering
+- direct YouTube-link playback inside the app
 - standard Mac text editing shortcuts
 - a directly buildable macOS app bundle
 
@@ -20,10 +21,19 @@ uses AppKit for the native window and text drawing, and Apple's Network
 framework for TCP and TLS. HTTP parsing, HTML parsing, document layout,
 navigation, and painting are implemented by Orynvane itself.
 
-The current engine focuses on HTML documents. CSS, JavaScript, images, forms,
-cookies, caching, tabs, bookmarks, and history are not currently implemented.
-Loads are capped at 8 MiB and 15 seconds, and the page view lays out up to
-50,000 visible characters.
+YouTube pages still travel through that independent engine. For recognized
+video links, Orynvane also resolves YouTube's anonymous player response with its
+own HTTP client and gives a compatible MP4 or HLS asset to AVFoundation for
+media decoding. AVKit supplies the native playback, seeking, Picture in Picture,
+and fullscreen controls above the page that Orynvane parsed and painted.
+
+The engine focuses on HTML documents. CSS, JavaScript, images, forms, cookies,
+caching, tabs, bookmarks, and history are not currently implemented. Loads are
+capped at 8 MiB and 15 seconds, and the page view lays out up to 50,000 visible
+characters. YouTube playback is anonymous, and on-demand videos currently use
+the best combined MP4 supplied to the native client, which is commonly standard
+definition. Restricted videos can require sign-in, and YouTube's undocumented
+player endpoint can change.
 
 ## Run
 
