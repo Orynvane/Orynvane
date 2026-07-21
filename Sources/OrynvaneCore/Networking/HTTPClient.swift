@@ -179,6 +179,26 @@ private extension HTTPClient {
     }
 }
 
+extension HTTPClient {
+    static func makeParameters(usesTLS: Bool) -> NWParameters {
+        let parameters: NWParameters
+        if usesTLS {
+            parameters = NWParameters(
+                tls: NWProtocolTLS.Options(),
+                tcp: NWProtocolTCP.Options()
+            )
+        } else {
+            parameters = .tcp
+        }
+
+        // Requests use origin-form targets and this client does not implement
+        // HTTP proxy protocol, so a transparently selected system proxy would
+        // receive invalid request bytes.
+        parameters.preferNoProxies = true
+        return parameters
+    }
+}
+
 private final class NetworkExchange: @unchecked Sendable {
     private static let maximumResponseBytes = 2 * 1024 * 1024
     private static let timeout: TimeInterval = 15
@@ -192,15 +212,7 @@ private final class NetworkExchange: @unchecked Sendable {
     private var didFinish = false
 
     init(host: String, port: NWEndpoint.Port, usesTLS: Bool) {
-        let parameters: NWParameters
-        if usesTLS {
-            parameters = NWParameters(
-                tls: NWProtocolTLS.Options(),
-                tcp: NWProtocolTCP.Options()
-            )
-        } else {
-            parameters = .tcp
-        }
+        let parameters = HTTPClient.makeParameters(usesTLS: usesTLS)
         connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: parameters)
     }
 
