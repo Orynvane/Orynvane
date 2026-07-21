@@ -22,7 +22,7 @@ navigation, and painting are implemented by Orynvane itself.
 
 The current engine focuses on HTML documents. CSS, JavaScript, images, forms,
 cookies, caching, tabs, bookmarks, and history are not currently implemented.
-Loads are capped at 2 MiB and 15 seconds, and the page view lays out up to
+Loads are capped at 8 MiB and 15 seconds, and the page view lays out up to
 50,000 visible characters.
 
 ## Run

@@ -69,12 +69,20 @@ extension HTTPClientError: LocalizedError {
 /// `HTTPClient` performs GET requests only. It does not provide cookies, a
 /// cache, authentication, compression, or any other browser service.
 public struct HTTPClient: Sendable {
+    public static let defaultMaximumResponseBytes = 8 * 1024 * 1024
+
     private let maxRedirects: Int
     private let userAgent: String
+    private let maximumResponseBytes: Int
 
-    public init(maxRedirects: Int = 5, userAgent: String = "Orynvane/0.1") {
+    public init(
+        maxRedirects: Int = 5,
+        userAgent: String = "Orynvane/0.1",
+        maximumResponseBytes: Int = HTTPClient.defaultMaximumResponseBytes
+    ) {
         self.maxRedirects = max(0, maxRedirects)
         self.userAgent = userAgent
+        self.maximumResponseBytes = max(1, maximumResponseBytes)
     }
 
     public func fetch(_ url: URL) async throws -> HTTPResponse {
@@ -85,7 +93,8 @@ public struct HTTPClient: Sendable {
             let wireData = try await NetworkExchange(
                 host: request.host,
                 port: request.port,
-                usesTLS: request.usesTLS
+                usesTLS: request.usesTLS,
+                maximumResponseBytes: maximumResponseBytes
             ).run(request: request.bytes)
             let parsed = try HTTPResponseParser.parse(wireData)
 
@@ -199,21 +208,38 @@ extension HTTPClient {
     }
 }
 
+struct HTTPResponseBuffer {
+    let maximumBytes: Int
+    private(set) var data = Data()
+
+    init(maximumBytes: Int) {
+        self.maximumBytes = max(0, maximumBytes)
+    }
+
+    mutating func append(_ chunk: Data) -> Bool {
+        guard chunk.count <= maximumBytes - data.count else {
+            return false
+        }
+        data.append(chunk)
+        return true
+    }
+}
+
 private final class NetworkExchange: @unchecked Sendable {
-    private static let maximumResponseBytes = 2 * 1024 * 1024
     private static let timeout: TimeInterval = 15
 
     private let connection: NWConnection
     private let queue = DispatchQueue(label: "Orynvane.HTTPConnection")
     private var continuation: CheckedContinuation<Data, Error>?
     private var timeoutWorkItem: DispatchWorkItem?
-    private var responseData = Data()
+    private var responseBuffer: HTTPResponseBuffer
     private var didSendRequest = false
     private var didFinish = false
 
-    init(host: String, port: NWEndpoint.Port, usesTLS: Bool) {
+    init(host: String, port: NWEndpoint.Port, usesTLS: Bool, maximumResponseBytes: Int) {
         let parameters = HTTPClient.makeParameters(usesTLS: usesTLS)
         connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: parameters)
+        responseBuffer = HTTPResponseBuffer(maximumBytes: maximumResponseBytes)
     }
 
     func run(request: Data) async throws -> Data {
@@ -279,17 +305,18 @@ private final class NetworkExchange: @unchecked Sendable {
             guard let self else { return }
 
             if let data, !data.isEmpty {
-                self.responseData.append(data)
+                guard self.responseBuffer.append(data) else {
+                    self.finish(.failure(.responseTooLarge(self.responseBuffer.maximumBytes)))
+                    return
+                }
             }
 
-            if self.responseData.count > Self.maximumResponseBytes {
-                self.finish(.failure(.responseTooLarge(Self.maximumResponseBytes)))
-            } else if let error {
+            if let error {
                 self.finish(.failure(.transport(error.localizedDescription)))
-            } else if HTTPResponseParser.isCompleteWithoutEOF(self.responseData) {
-                self.finish(.success(self.responseData))
+            } else if HTTPResponseParser.isCompleteWithoutEOF(self.responseBuffer.data) {
+                self.finish(.success(self.responseBuffer.data))
             } else if isComplete {
-                self.finish(.success(self.responseData))
+                self.finish(.success(self.responseBuffer.data))
             } else {
                 self.receiveNextChunk()
             }
